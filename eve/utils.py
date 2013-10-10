@@ -164,7 +164,8 @@ def date_to_str(date):
 
     :param date: the datetime value to convert.
     """
-    return datetime.strftime(date, config.DATE_FORMAT) if date else None
+    if date and date > datetime(1900, 1, 1, 0, 0, tzinfo=date.tzinfo):
+        return datetime.strftime(date, config.DATE_FORMAT) if date else None
 
 
 def collection_link(resource):

@@ -19,7 +19,7 @@ import sys
 from flask import abort
 from flask.ext.pymongo import PyMongo
 from datetime import datetime
-from bson import ObjectId
+from bson import ObjectId, json_util
 from eve import ID_FIELD
 from eve.io.mongo.parser import parse, ParseError
 from eve.io.base import DataLayer, ConnectionException
@@ -138,6 +138,7 @@ class Mongo(DataLayer):
                     'Unable to parse `projection` clause'
                 ))
 
+
         datasource, spec, projection = self._datasource_ex(resource, spec,
                                                            client_projection)
 
@@ -159,7 +160,7 @@ class Mongo(DataLayer):
         if req.where:
             try:
                 spec = self._sanitize(
-                    self._jsondatetime(json.loads(req.where)))
+                    self._jsondatetime(json.loads(req.where, object_hook=json_util.object_hook)))
             except:
                 try:
                     spec = parse(req.where)
@@ -181,12 +182,12 @@ class Mongo(DataLayer):
 
         datasource, spec, projection = self._datasource_ex(resource, spec,
                                                            client_projection)
+
         pipeline = []
         pipeline.append({"$match": spec})
-        pipeline
+        pipeline.append({"$limit": 20})
         docs = self.driver.db[datasource].aggregate(pipeline)["result"]
         cursor = Cursor(docs)
-        print cursor
         return cursor
 
     def find_one(self, resource, **lookup):
