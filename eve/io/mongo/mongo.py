@@ -25,6 +25,26 @@ from eve.io.mongo.parser import parse, ParseError
 from eve.io.base import DataLayer, ConnectionException
 from eve.utils import config, debug_error_message, validate_filters
 
+class Cursor(object):
+    """Used to emulate mongo cursor for aggregate function (will be obsolete in mongo 2.6)
+    """
+    def __init__(self, documents):
+        self.documents = documents
+        self.current = 0
+        self._count = len(self.documents)
+
+    def __iter__(self):
+        return self
+
+    def count(self):
+        return self._count
+
+    def next(self):
+        if self.current == self._count:
+            raise StopIteration
+        curr_doc = self.documents[self.current]
+        self.current += 1
+        return curr_doc
 
 class Mongo(DataLayer):
     """ MongoDB data access layer for Eve REST API.
@@ -132,6 +152,42 @@ class Mongo(DataLayer):
             args['fields'] = projection
 
         return self.driver.db[datasource].find(**args)
+
+    def aggregate(self, resource, req):
+        client_projection = {}
+        spec = {}
+        if req.where:
+            try:
+                spec = self._sanitize(
+                    self._jsondatetime(json.loads(req.where)))
+            except:
+                try:
+                    spec = parse(req.where)
+                except ParseError:
+                    abort(400, description=debug_error_message(
+                        'Unable to parse `where` clause'
+                    ))
+        bad_filter = validate_filters(spec, resource)
+        if bad_filter:
+            abort(400, bad_filter)
+
+        if req.projection:
+            try:
+                client_projection = json.loads(req.projection)
+            except:
+                abort(400, description=debug_error_message(
+                    'Unable to parse `projection` clause'
+                ))
+
+        datasource, spec, projection = self._datasource_ex(resource, spec,
+                                                           client_projection)
+        pipeline = []
+        pipeline.append({"$match": spec})
+        pipeline
+        docs = self.driver.db[datasource].aggregate(pipeline)["result"]
+        cursor = Cursor(docs)
+        print cursor
+        return cursor
 
     def find_one(self, resource, **lookup):
         """Retrieves a single document.
