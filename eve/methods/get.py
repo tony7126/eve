@@ -63,7 +63,7 @@ def get(resource):
     last_update = epoch()
 
     req = parse_request(resource)
-    cursor = app.data.aggregate(resource, req)
+    cursor = app.data.find(resource, req)
 
     for document in cursor:
         document[config.LAST_UPDATED] = last_updated(document)
