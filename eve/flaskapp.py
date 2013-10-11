@@ -367,6 +367,7 @@ class Eve(Flask, Events):
             settings.setdefault('embedding', self.config['EMBEDDING'])
             settings.setdefault('pagination', self.config['PAGINATION'])
             settings.setdefault('projection', self.config['PROJECTION'])
+            settings.setdefault('aggregation', self.config['AGGREGATION'])  #used for get requests.  Rather than returning raw docs, aggregate on specified keys
             # TODO make sure that this we really need the test below
             if settings['item_lookup']:
                 item_methods = self.config['ITEM_METHODS']

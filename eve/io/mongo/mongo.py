@@ -184,10 +184,13 @@ class Mongo(DataLayer):
                                                            client_projection)
 
         pipeline = []
+        print projection
         pipeline.append({"$match": spec})
+        pipeline.append({"$project": projection})
+        #pipeline.append({"$group": {"_id"}})
         pipeline.append({"$limit": 20})
         docs = self.driver.db[datasource].aggregate(pipeline)["result"]
-        cursor = Cursor(docs)
+        cursor = Cursor(docs)  #gives required functions to returned result 
         return cursor
 
     def find_one(self, resource, **lookup):

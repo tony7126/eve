@@ -86,6 +86,24 @@ class DataLayer(object):
         """
         raise NotImplementedError
 
+    def aggregate(self, resource, req):
+        """Retrieves an aggregated set of documents matching the current request.
+        Used mainly for analytics type endpoints.
+        Consumed when request hits a collection endpoint
+        ('/people/').
+        :param resource: resource being accessed. You should then use
+                         the ``_datasource`` helper function to retrieve both
+                         the db collection/table and base query (filter), if
+                         any.
+        :param req: an instance of ``eve.utils.ParsedRequest``. This contains
+                    all the constraints that must be fulfilled in order to
+                    satisfy the original request (where and sort parts, paging,
+                    etc). Be warned that `where` and `sort` expresions will
+                    need proper parsing, according to the syntax that you want
+                    to support with your driver. For example ``eve.io.Mongo``
+                    supports both Python and Mongo-like query syntaxes.
+        """
+
     def find_one(self, resource, **lookup):
         """Retrieves a single document/record. Consumed when a request hits an
         item endpoint (`/people/id/`).
