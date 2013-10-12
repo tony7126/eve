@@ -178,6 +178,9 @@ class Eve(Flask, Events):
         """ Makes sure that REST methods expressed in the configuration
         settings are supported.
 
+        ..versionchanged 0.1.1
+        Support aggregation on GET method.
+
         .. versionchanged:: 0.1.0
         Support for PUT method.
 
@@ -203,6 +206,9 @@ class Eve(Flask, Events):
 
         # make sure that individual resource/item methods are supported.
         for resource, settings in self.config['DOMAIN'].items():
+            self.validate_aggregation(settings["aggregation"],
+                                  "default_groupers" in settings, 
+                                  "default_groupees" in settings)
             self.validate_methods(supported_resource_methods,
                                   settings['resource_methods'],
                                   '[%s] resource ' % resource)
@@ -256,6 +262,17 @@ class Eve(Flask, Events):
                                   'Supported: %s' %
                                   (item, ', '.join(diff),
                                    ', '.join(allowed)))
+
+    def validate_aggregation(self, aggregation, has_groupers, has_groupees):
+        """ If aggregation enabled, checks to make sure necessary defaults are set
+        """
+        #TODO: check default groupees/groupers formatting.  Ensure all keys in those groups are in the schema.
+
+        if aggregation:
+            if not has_groupers:
+                raise ConfigException("All aggregation enabled resources must have a default_groupers field")
+            elif not has_groupees:
+                raise ConfigException("All aggregation enabled resources must have a default_groupees field")
 
     def validate_schema(self, resource, schema):
         """ Validates a resource schema.

@@ -183,12 +183,22 @@ class Mongo(DataLayer):
         datasource, spec, projection = self._datasource_ex(resource, spec,
                                                            client_projection)
 
+
+        groupers = config.DOMAIN[resource]["default_groupers"]
+        groupees = config.DOMAIN[resource]["default_groupees"]
+        group_val = {}
+        group_val["_id"] = {g: "$%s" % g for g in groupers}
+        for group_info in groupees:
+            name = group_info["name"]
+            group_type = group_info["type"]
+            group_val[name] = {"$%s" % group_type: "$%s" % name}
+
         pipeline = []
-        print projection
         pipeline.append({"$match": spec})
         pipeline.append({"$project": projection})
-        #pipeline.append({"$group": {"_id"}})
-        pipeline.append({"$limit": 20})
+        pipeline.append({"$group": group_val})
+        pipeline.append({"$limit": 1000})
+        
         docs = self.driver.db[datasource].aggregate(pipeline)["result"]
         cursor = Cursor(docs)  #gives required functions to returned result 
         return cursor
