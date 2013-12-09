@@ -85,7 +85,6 @@ def parse(value, resource):
     except:
         # already a json
         document = value
-
     # By design, dates are expressed as RFC-1123 strings. We convert them
     # to proper datetimes.
     dates = app.config['DOMAIN'][resource]['dates']
