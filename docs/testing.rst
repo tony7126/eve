@@ -31,8 +31,8 @@ Or even a single class function:
 
    $ python setup.py test -s eve.tests.methods.get.TestGetItem.test_get_max_results
 
-RateLimting and Redis
----------------------
+RateLimiting and Redis
+----------------------
 While there are no test requirements for most of the suite, please be advised
 that in order to execute the :ref:`ratelimiting` tests you need a running
 Redis_ server, and redispy_ must be installed. The Rate-Limiting tests are
@@ -45,8 +45,8 @@ yourself with
 
     $ pip install redis
     
-Continous Integration
----------------------
+Continuous Integration
+----------------------
 Each time code is pushed to either the ``develop`` or the ``master``  branch
 the whole test-suite is executed on Travis-CI. This is also the case for
 pull-requests. When a pull request is submitted and the CI run fails two things

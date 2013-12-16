@@ -292,7 +292,7 @@ value:
             account = accounts.find_one(lookup)
             # set 'AUTH_FIELD' value to the account's ObjectId 
             # (instead of _Id, you might want to use ID_FIELD)
-            self.user_id = account['_id']
+            self.request_auth_value = account['_id']
             return account and check_password_hash(account['password'], password)
 
 
@@ -454,14 +454,15 @@ to be stored to the database.
 
     if __name__ == '__main__':
         app = Eve(auth=RolesAuth)
-        app.on_POST_accounts += add_token
+        app.on_insert_accounts += add_token
         app.run()
 
-As you can see, we are subscribing to the ``on_POST`` event of the `accounts`
+As you can see, we are subscribing to the ``on_insert`` event of the `accounts`
 endpoint with our ``add_token`` function. This callback will receive
 `documents` as an argument, which is a list of validated documents accepted for
 database insertion. We simply add (or replace in the unlikely case that the
-request contained it already) a token to every document, and we're done!
+request contained it already) a token to every document, and we're done! For
+more information on callbacks, see `Event Hooks`_.
 
 4. Returning the token with the response
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -533,3 +534,4 @@ you're sending your tokens out-of-band, and you're on SSL/TLS, that's quite
 a lot of additional security. 
 
 .. _SSL/TLS: http://en.wikipedia.org/wiki/Transport_Layer_Security
+.. _`Event Hooks`: http://python-eve.org/features.html#event-hooks

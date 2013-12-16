@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import re
 import unittest
 import eve
 import string
@@ -12,6 +11,7 @@ from flask.ext.pymongo import MongoClient
 from bson import ObjectId
 from eve.tests.test_settings import MONGO_PASSWORD, MONGO_USERNAME, \
     MONGO_DBNAME, DOMAIN, MONGO_HOST, MONGO_PORT
+from eve import ISSUES
 
 
 class TestMinimal(unittest.TestCase):
@@ -20,7 +20,7 @@ class TestMinimal(unittest.TestCase):
     using :func:`setUp()`
     """
 
-    def setUp(self, settings_file=None):
+    def setUp(self, settings_file=None, url_converters=None):
         """ Prepare the test fixture
 
         :param settings_file: the name of the settings file.  Defaults
@@ -31,11 +31,13 @@ class TestMinimal(unittest.TestCase):
             THIS_DIRECTORY = os.path.dirname(os.path.realpath(__file__))
             settings_file = os.path.join(THIS_DIRECTORY, 'test_settings.py')
 
+        self.connection = None
         self.known_resource_count = 101
         self.setupDB()
 
         self.settings_file = settings_file
-        self.app = eve.Eve(settings=self.settings_file)
+        self.app = eve.Eve(settings=self.settings_file,
+                           url_converters=url_converters)
 
         self.test_client = self.app.test_client()
 
@@ -71,13 +73,11 @@ class TestMinimal(unittest.TestCase):
         v = json.loads(r.get_data()) if r.status_code == 200 else None
         return v, r.status_code
 
-    def assertValidationError(self, response, key, matches):
-        self.assertTrue(key in response)
-        k = response[key]
-        self.assertTrue('status' in k)
-        self.assertTrue(eve.STATUS_ERR in k['status'])
-        self.assertTrue('issues' in k)
-        issues = k['issues']
+    def assertValidationError(self, response, matches):
+        self.assertTrue('status' in response)
+        self.assertTrue(eve.STATUS_ERR in response['status'])
+        self.assertTrue(ISSUES in response)
+        issues = response[ISSUES]
         self.assertTrue(len(issues))
 
         for match in matches:
@@ -112,12 +112,6 @@ class TestMinimal(unittest.TestCase):
     def assertItem(self, item):
         self.assertEqual(type(item), dict)
 
-        _id = item.get(self.app.config['ID_FIELD'])
-        self.assertTrue(_id is not None)
-        match = re.compile(self.app.config['ITEM_URL']).match(_id)
-        self.assertTrue(match is not None)
-        self.assertEqual(match.group(), _id)
-
         updated_on = item.get(self.app.config['LAST_UPDATED'])
         self.assertTrue(updated_on is not None)
         try:
@@ -135,6 +129,7 @@ class TestMinimal(unittest.TestCase):
                       (self.app.config['DATE_CREATED'], e))
 
         link = item.get('_links')
+        _id = item.get(self.app.config['ID_FIELD'])
         self.assertItemLink(link, _id)
 
     def assertHomeLink(self, links):
@@ -143,7 +138,8 @@ class TestMinimal(unittest.TestCase):
         self.assertTrue('title' in link)
         self.assertTrue('href' in link)
         self.assertEqual('home', link['title'])
-        self.assertEqual("%s" % self.app.config['SERVER_NAME'], link['href'])
+        self.assertEqual("%s" % self.app.config.get('SERVER_NAME', ''),
+                         link['href'])
 
     def assertResourceLink(self, links, resource):
         self.assertTrue('self' in links)
@@ -152,7 +148,8 @@ class TestMinimal(unittest.TestCase):
         self.assertTrue('href' in link)
         url = self.domain[resource]['url']
         self.assertEqual(url, link['title'])
-        self.assertEqual("%s/%s" % (self.app.config['SERVER_NAME'], url),
+        self.assertEqual("%s/%s" % (self.app.config.get('SERVER_NAME', ''),
+                                    url),
                          link['href'])
 
     def assertCollectionLink(self, links, resource):
@@ -162,8 +159,8 @@ class TestMinimal(unittest.TestCase):
         self.assertTrue('href' in link)
         url = self.domain[resource]['url']
         self.assertEqual(url, link['title'])
-        self.assertEqual("%s/%s" % (self.app.config['SERVER_NAME'], url),
-                         link['href'])
+        self.assertEqual("%s/%s" % (self.app.config.get('SERVER_NAME', ''),
+                                    url), link['href'])
 
     def assertNextLink(self, links, page):
         self.assertTrue('next' in links)
@@ -241,8 +238,8 @@ class TestMinimal(unittest.TestCase):
 
 class TestBase(TestMinimal):
 
-    def setUp(self):
-        super(TestBase, self).setUp()
+    def setUp(self, url_converters=None):
+        super(TestBase, self).setUp(url_converters=url_converters)
 
         self.known_resource = 'contacts'
         self.known_resource_url = ('/%s' %
@@ -271,7 +268,7 @@ class TestBase(TestMinimal):
                                        self.domain[
                                            self.different_resource]['url'])
 
-        response, status = self.get('contacts', '?max_results=2')
+        response, _ = self.get('contacts', '?max_results=2')
         contact = self.response_item(response)
         self.item_id = contact[self.app.config['ID_FIELD']]
         self.item_name = contact['ref']
@@ -286,12 +283,12 @@ class TestBase(TestMinimal):
                                self.item_name))
         self.alt_ref = self.response_item(response, 1)['ref']
 
-        response, status = self.get('payments', '?max_results=1')
+        response, _ = self.get('payments', '?max_results=1')
         self.readonly_id = self.response_item(response)['_id']
         self.readonly_id_url = ('%s/%s' % (self.readonly_resource_url,
                                            self.readonly_id))
 
-        response, status = self.get('users')
+        response, _ = self.get('users')
         user = self.response_item(response)
         self.user_id = user[self.app.config['ID_FIELD']]
         self.user_username = user['username']
@@ -305,7 +302,7 @@ class TestBase(TestMinimal):
                         self.user_username)
         )
 
-        response, status = self.get('invoices')
+        response, _ = self.get('invoices')
         invoice = self.response_item(response)
         self.invoice_id = invoice[self.app.config['ID_FIELD']]
         self.invoice_etag = invoice['etag']
@@ -367,7 +364,7 @@ class TestBase(TestMinimal):
 
     def random_invoices(self, num):
         invoices = []
-        for i in range(num):
+        for _ in range(num):
             dt = datetime.now()
             invoice = {
                 'inv_number':  self.random_string(10),
@@ -390,7 +387,7 @@ class TestBase(TestMinimal):
     def random_rows(self, num):
         schema = DOMAIN['contacts']['schema']['rows']['schema']['schema']
         rows = []
-        for i in range(num):
+        for _ in range(num):
             rows.append(
                 {
                     'sku': self.random_string(schema['sku']['maxlength']),

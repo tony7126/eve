@@ -14,7 +14,7 @@ ITEM_METHODS = ['GET', 'PATCH', 'DELETE', 'PUT']
 ITEM_CACHE_CONTROL = ''
 ITEM_LOOKUP = True
 ITEM_LOOKUP_FIELD = ID_FIELD
-ITEM_URL = '[a-f0-9]{24}'
+#ITEM_URL = '[a-f0-9]{24}'
 
 contacts = {
     'url': 'arbitraryurl',
@@ -22,7 +22,7 @@ contacts = {
     'cache_expires': 20,
     'item_title': 'contact',
     'additional_lookup': {
-        'url': '[\w]+',   # to be unique field
+        'url': 'regex("[\w]+")',   # to be unique field
         'field': 'ref'
     },
     'datasource': {'filter': {'username': {'$exists': False}}},
@@ -71,6 +71,18 @@ contacts = {
         'title': {
             'type': 'string',
             'default': 'Mr.',
+        },
+        'id_list': {
+            'type': 'list',
+            'schema': {'type': 'objectid'}
+        },
+        'id_list_of_dict': {
+            'type': 'list',
+            'schema': {'type': 'dict', 'schema': {'id': {'type': 'objectid'}}}
+        },
+        'id_list_fixed_len': {
+            'type': 'list',
+            'items': [{'type': 'objectid'}]
         }
     }
 }
@@ -93,11 +105,14 @@ invoices = {
         'inv_number': {'type': 'string'},
         'person': {
             'type': 'objectid',
-            'data_relation': {'collection': 'contacts'}
+            'data_relation': {'resource': 'contacts'}
         }
     }
 }
 
+users_overseas = copy.deepcopy(users)
+users_overseas['url'] = 'users/overseas'
+users_overseas['datasource'] = {'source': 'contacts'}
 
 payments = {
     'resource_methods': ['GET'],
@@ -106,10 +121,21 @@ payments = {
 
 empty = copy.deepcopy(invoices)
 
+user_restricted_access = copy.deepcopy(contacts)
+user_restricted_access['url'] = 'restricted'
+user_restricted_access['datasource'] = {'source': 'contacts'}
+
+users_invoices = copy.deepcopy(invoices)
+users_invoices['url'] = 'users/<regex("[a-f0-9]{24}"):person>/invoices'
+users_invoices['datasource'] = {'source': 'invoices'}
+
 DOMAIN = {
     'contacts': contacts,
     'users': users,
+    'users_overseas': users_overseas,
     'invoices': invoices,
     'payments': payments,
     'empty': empty,
+    'restricted': user_restricted_access,
+    'peopleinvoices': users_invoices,
 }

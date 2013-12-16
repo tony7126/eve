@@ -16,11 +16,13 @@ from flask import current_app as app, request
 from eve.utils import document_link, config, document_etag
 from eve.auth import requires_auth
 from eve.validation import ValidationError
-from eve.methods.common import parse, payload, ratelimit
+from eve.methods.common import parse, payload, ratelimit, \
+    resolve_default_values, pre_event
 
 
 @ratelimit()
 @requires_auth('resource')
+@pre_event
 def post(resource, payl=None):
     """ Adds one or more documents to a resource. Each document is validated
     against the domain schema. If validation passes the document is inserted
@@ -40,6 +42,17 @@ def post(resource, payl=None):
 
                  See https://github.com/nicolaiarocci/eve/issues/74 for a
                  discussion, and a typical use case.
+
+    .. versionchanged:: 0.2
+       Use the new STATUS setting.
+       Use the new ISSUES setting.
+       Raise 'on_pre_<method>' event.
+       Explictly resolve default values instead of letting them be resolved
+       by common.parse. This avoids a validation error when a read-only field
+       also has a default value.
+
+    .. versionchanged:: 0.1.1
+       auth.request_auth_value is now used to store the auth_field value.
 
     .. versionchanged:: 0.1.0
        More robust handling of auth_field.
@@ -95,7 +108,11 @@ def post(resource, payl=None):
     # validation, and additional fields
     if payl is None:
         payl = payload()
-    for key, value in payl.items():
+
+    if isinstance(payl, dict):
+        payl = [payl]
+
+    for value in payl:
         document = []
         doc_issues = []
         try:
@@ -110,11 +127,13 @@ def post(resource, payl=None):
                 # and there's an Auth request active,
                 # inject the auth_field into the document
                 auth_field = resource_def['auth_field']
-                if auth_field:
-                    auth_field_value = getattr(app.auth, auth_field)
-                    if auth_field_value and request.authorization:
-                        document[auth_field] = auth_field_value
+                if app.auth and auth_field:
+                    request_auth_value = \
+                        resource_def['authentication'].request_auth_value
+                    if request_auth_value and request.authorization:
+                        document[auth_field] = request_auth_value
 
+                resolve_default_values(document, resource)
             else:
                 # validation errors added to list of document issues
                 doc_issues.extend(validator.errors)
@@ -138,20 +157,20 @@ def post(resource, payl=None):
         ids = app.data.insert(resource, documents)
 
     # build response payload
-    response = {}
-    for key, doc_issues in zip(payl.keys(), issues):
+    response = []
+    for doc_issues in issues:
         response_item = {}
         if len(doc_issues):
-            response_item['status'] = config.STATUS_ERR
-            response_item['issues'] = doc_issues
+            response_item[config.STATUS] = config.STATUS_ERR
+            response_item[config.ISSUES] = doc_issues
         else:
-            response_item['status'] = config.STATUS_OK
+            response_item[config.STATUS] = config.STATUS_OK
             response_item[config.ID_FIELD] = ids.pop(0)
             document = documents.pop(0)
             response_item[config.LAST_UPDATED] = document[config.LAST_UPDATED]
             response_item['etag'] = document_etag(document)
             if resource_def['hateoas']:
-                response_item['_links'] = \
+                response_item[config.LINKS] = \
                     {'self': document_link(resource,
                                            response_item[config.ID_FIELD])}
 
@@ -161,6 +180,9 @@ def post(resource, payl=None):
             for field in allowed_fields:
                 response_item[field] = document[field]
 
-        response[key] = response_item
+        response.append(response_item)
+
+    if len(response) == 1:
+        response = response.pop(0)
 
     return response, None, None, 200

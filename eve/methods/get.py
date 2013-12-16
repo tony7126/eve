@@ -12,21 +12,26 @@
 """
 
 import math
-from flask import current_app as app, abort
+from flask import current_app as app, abort, request
 import simplejson as json
-from .common import ratelimit, epoch, date_created, last_updated
+from .common import ratelimit, epoch, date_created, last_updated, pre_event
 from eve.auth import requires_auth
-from eve.utils import parse_request, document_etag, document_link, \
-    collection_link, home_link, querydef, resource_uri, config, \
-    debug_error_message
+from eve.utils import parse_request, document_etag, document_link, home_link, \
+    querydef, config, debug_error_message
 
 
 @ratelimit()
 @requires_auth('resource')
-def get(resource):
-    """Retrieves the resource documents that match the current request.
+@pre_event
+def get(resource, lookup):
+    """ Retrieves the resource documents that match the current request.
 
     :param resource: the name of the resource.
+
+    .. versionchanged:: 0.2
+       Use the new ITEMS configuration setting.
+       Raise 'on_pre_<method>' event.
+       Let cursor add extra info to response.
 
     .. versionchanged:: 0.1.0
        Support for optional HATEOAS.
@@ -68,6 +73,7 @@ def get(resource):
     else:
         cursor = app.data.find(resource, req)
 
+
     for document in cursor:
         document[config.LAST_UPDATED] = last_updated(document)
         document[config.DATE_CREATED] = date_created(document)
@@ -78,9 +84,9 @@ def get(resource):
         # document metadata
         document['etag'] = document_etag(document)
         if config.DOMAIN[resource]['hateoas']:
-            document['_links'] = {'self':
-                                  document_link(resource,
-                                                document[config.ID_FIELD])}
+            document[config.LINKS] = {'self':
+                                      document_link(resource,
+                                                    document[config.ID_FIELD])}
 
         documents.append(document)
 
@@ -105,11 +111,17 @@ def get(resource):
         getattr(app, "on_fetch_resource_%s" % resource)(documents)
 
         if config.DOMAIN[resource]['hateoas']:
-            response['_items'] = documents
-            response['_links'] = _pagination_links(resource, req,
-                                                   cursor.count())
+            response[config.ITEMS] = documents
+            response[config.LINKS] = _pagination_links(resource, req,
+                                                       cursor.count())
         else:
             response = documents
+
+        # the 'extra' cursor field, if present, will be added to the response.
+        # Can be used by Eve extensions to add extra, custom data to any
+        # response.
+        if hasattr(cursor, 'extra'):
+            getattr(cursor, 'extra')(response)
 
     etag = None
     return response, last_modified, etag, status
@@ -117,11 +129,14 @@ def get(resource):
 
 @ratelimit()
 @requires_auth('item')
+@pre_event
 def getitem(resource, **lookup):
-    """ Retrieves and returns a single document.
-
+    """
     :param resource: the name of the resource to which the document belongs.
     :param **lookup: the lookup query.
+
+    .. versionchanged:: 0.1.1
+       Support for Embeded Resource Serialization.
 
     .. versionchanged:: 0.1.0
        Support for optional HATEOAS.
@@ -174,10 +189,14 @@ def getitem(resource, **lookup):
             # resolution (1 second).
             return response, last_modified, document['etag'], 304
 
+        _resolve_embedded_documents(resource, req, [document])
+
         if config.DOMAIN[resource]['hateoas']:
-            response['_links'] = {
+            response[config.LINKS] = {
                 'self': document_link(resource, document[config.ID_FIELD]),
-                'collection': collection_link(resource),
+                'collection': {'title':
+                               config.DOMAIN[resource]['resource_title'],
+                               'href': _collection_link(resource, True)},
                 'parent': home_link()
             }
 
@@ -199,9 +218,9 @@ def getitem(resource, **lookup):
 
 
 def _resolve_embedded_documents(resource, req, documents):
-    """Loops through the documents, adding embedded representations
+    """ Loops through the documents, adding embedded representations
     of any fields that are (1) defined eligible for embedding in the
-    DOMAIN and (2) requested to be embedded in the current `req`
+    DOMAIN and (2) requested to be embedded in the current `req`.
 
     Currently we only support a single layer of embedding,
     i.e. /invoices/?embedded={"user":1}
@@ -211,8 +230,15 @@ def _resolve_embedded_documents(resource, req, documents):
     :param req: and instace of :class:`eve.utils.ParsedRequest`.
     :param documents: list of documents returned by the query.
 
+    .. versionchagend:: 0.2
+        Support for 'embedded_fields'.
+
+    .. versonchanged:: 0.1.1
+       'collection' key has been renamed to 'resource' (data_relation).
+
     .. versionadded:: 0.1.0
     """
+    embedded_fields = []
     if req.embedded:
         # Parse the embedded clause, we are expecting
         # something like:   '{"user":1}'
@@ -233,24 +259,28 @@ def _resolve_embedded_documents(resource, req, documents):
                 'Unable to parse `embedded` clause'
             ))
 
-        # For each field, is the field allowed to be embedded?
-        # Pick out fields that have a `data_relation` where `embeddable=True`
-        enabled_embedded_fields = []
-        for field in embedded_fields:
-            # Reject bogus field names
-            if field in config.DOMAIN[resource]['schema']:
-                field_definition = config.DOMAIN[resource]['schema'][field]
-                if 'data_relation' in field_definition and \
-                        field_definition['data_relation'].get('embeddable'):
-                    # or could raise 400 here
-                    enabled_embedded_fields.append(field)
+    embedded_fields = list(
+        set(config.DOMAIN[resource]['embedded_fields']) |
+        set(embedded_fields))
+
+    # For each field, is the field allowed to be embedded?
+    # Pick out fields that have a `data_relation` where `embeddable=True`
+    enabled_embedded_fields = []
+    for field in embedded_fields:
+        # Reject bogus field names
+        if field in config.DOMAIN[resource]['schema']:
+            field_definition = config.DOMAIN[resource]['schema'][field]
+            if 'data_relation' in field_definition and \
+                    field_definition['data_relation'].get('embeddable'):
+                # or could raise 400 here
+                enabled_embedded_fields.append(field)
 
         for document in documents:
             for field in enabled_embedded_fields:
                 field_definition = config.DOMAIN[resource]['schema'][field]
                 # Retrieve and serialize the requested document
                 embedded_doc = app.data.find_one(
-                    field_definition['data_relation']['collection'],
+                    field_definition['data_relation']['resource'],
                     **{config.ID_FIELD: document[field]}
                 )
                 if embedded_doc:
@@ -258,7 +288,7 @@ def _resolve_embedded_documents(resource, req, documents):
 
 
 def _pagination_links(resource, req, documents_count):
-    """Returns the appropriate set of resource links depending on the
+    """ Returns the appropriate set of resource links depending on the
     current page and the total number of documents returned by the query.
 
     :param resource: the resource name.
@@ -278,13 +308,15 @@ def _pagination_links(resource, req, documents_count):
     .. versionchanged:: 0.0.3
        JSON links
     """
-    _links = {'parent': home_link(), 'self': collection_link(resource)}
+    _links = {'parent': home_link(),
+              'self': {'title': config.DOMAIN[resource]['resource_title'],
+                       'href': _collection_link(resource)}}
 
     if documents_count and config.DOMAIN[resource]['pagination']:
         if req.page * req.max_results < documents_count:
             q = querydef(req.max_results, req.where, req.sort, req.page + 1)
             _links['next'] = {'title': 'next page', 'href': '%s%s' %
-                              (resource_uri(resource), q)}
+                              (_collection_link(resource), q)}
 
             # in python 2.x dividing 2 ints produces an int and that's rounded
             # before the ceil call. Have to cast one value to float to get
@@ -295,11 +327,19 @@ def _pagination_links(resource, req, documents_count):
                                       / float(req.max_results)))
             q = querydef(req.max_results, req.where, req.sort, last_page)
             _links['last'] = {'title': 'last page', 'href': '%s%s'
-                              % (resource_uri(resource), q)}
+                              % (_collection_link(resource), q)}
 
         if req.page > 1:
             q = querydef(req.max_results, req.where, req.sort, req.page - 1)
             _links['prev'] = {'title': 'previous page', 'href': '%s%s' %
-                              (resource_uri(resource), q)}
+                              (_collection_link(resource), q)}
 
     return _links
+
+
+def _collection_link(resource, item=False):
+    path = request.path.rstrip('/')
+    if item:
+        path = path[:path.rfind('/')]
+    server_name = config.SERVER_NAME if config.SERVER_NAME else ''
+    return '%s%s' % (server_name, path)

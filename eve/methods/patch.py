@@ -17,19 +17,28 @@ from eve.utils import document_etag, document_link, config, debug_error_message
 from eve.auth import requires_auth
 from eve.validation import ValidationError
 from eve.methods.common import get_document, parse, payload as payload_, \
-    ratelimit
+    ratelimit, pre_event
 
 
 @ratelimit()
 @requires_auth('item')
+@pre_event
 def patch(resource, **lookup):
-    """Perform a document patch/update. Updates are first validated against
+    """ Perform a document patch/update. Updates are first validated against
     the resource schema. If validation passes, the document is updated and
     an OK status update is returned. If validation fails, a set of validation
     issues is returned.
 
     :param resource: the name of the resource to which the document belongs.
     :param **lookup: document lookup query.
+
+    .. versionchanged:: 0.2
+       Use the new STATUS setting.
+       Use the new ISSUES setting.
+       Raise 'on_pre_<method>' event.
+
+    .. versionchanged:: 0.1.1
+       Item-identifier wrapper stripped from both request and response payload.
 
     .. versionchanged:: 0.1.0
        Support for optional HATEOAS.
@@ -60,12 +69,6 @@ def patch(resource, **lookup):
        JSON links. Superflous ``response`` container removed.
     """
     payload = payload_()
-    if len(payload) > 1:
-        # only one update-per-document supported
-        abort(400, description=debug_error_message(
-            'Only one update-per-document supported'
-        ))
-
     original = get_document(resource, **lookup)
     if not original:
         # not found
@@ -80,15 +83,10 @@ def patch(resource, **lookup):
     etag = None
 
     issues = []
-
-    # TODO the list is needed for Py33. Find a less ridiculous alternative?
-    key = list(payload.keys())[0]
-    value = payload[key]
-
-    response_item = {}
+    response = {}
 
     try:
-        updates = parse(value, resource)
+        updates = parse(payload, resource)
         validation = validator.validate_update(updates, object_id)
         if validation:
             # the mongo driver has a different precision than the python
@@ -103,15 +101,15 @@ def patch(resource, **lookup):
             etag = document_etag(original)
 
             app.data.update(resource, object_id, updates)
-            response_item[config.ID_FIELD] = object_id
-            last_modified = response_item[config.LAST_UPDATED] = \
+            response[config.ID_FIELD] = object_id
+            last_modified = response[config.LAST_UPDATED] = \
                 original[config.LAST_UPDATED]
 
             # metadata
-            response_item['etag'] = etag
+            response['etag'] = etag
             if resource_def['hateoas']:
-                response_item['_links'] = {'self': document_link(resource,
-                                                                 object_id)}
+                response[config.LINKS] = {'self': document_link(resource,
+                                                                object_id)}
         else:
             issues.extend(validator.errors)
     except ValidationError as e:
@@ -127,11 +125,9 @@ def patch(resource, **lookup):
         ))
 
     if len(issues):
-        response_item['issues'] = issues
-        response_item['status'] = config.STATUS_ERR
+        response[config.ISSUES] = issues
+        response[config.STATUS] = config.STATUS_ERR
     else:
-        response_item['status'] = config.STATUS_OK
+        response[config.STATUS] = config.STATUS_OK
 
-    response = {}
-    response[key] = response_item
     return response, last_modified, etag, 200

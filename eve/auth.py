@@ -23,23 +23,25 @@ def requires_auth(endpoint_class):
         @wraps(f)
         def decorated(*args, **kwargs):
             if args:
+                # resource or item endpoint
                 resource_name = args[0]
                 resource = app.config['DOMAIN'][args[0]]
+                if endpoint_class == 'resource':
+                    public = resource['public_methods']
+                    roles = resource['allowed_roles']
+                elif endpoint_class == 'item':
+                    public = resource['public_item_methods']
+                    roles = resource['allowed_item_roles']
+                auth = resource['authentication']
             else:
+                # home
                 resource_name = resource = None
-            if endpoint_class == 'resource':
-                public = resource['public_methods']
-                roles = resource['allowed_roles']
-            elif endpoint_class == 'item':
-                public = resource['public_item_methods']
-                roles = resource['allowed_item_roles']
-            elif endpoint_class == 'home':
                 public = app.config['PUBLIC_METHODS'] + ['OPTIONS']
                 roles = app.config['ALLOWED_ROLES']
-            if app.auth and request.method not in public:
-                if not app.auth.authorized(roles, resource_name,
-                                           request.method):
-                    return app.auth.authenticate()
+                auth = app.auth
+            if auth and request.method not in public:
+                if not auth.authorized(roles, resource_name, request.method):
+                    return auth.authenticate()
             return f(*args, **kwargs)
         return decorated
     return fdec
@@ -47,7 +49,10 @@ def requires_auth(endpoint_class):
 
 class BasicAuth(object):
     """ Implements Basic AUTH logic. Should be subclassed to implement custom
-    authorization checking.
+    authentication checking.
+
+    .. versionchanged:: 0.1.1
+        auth.request_auth_value is now used to store the auth_field value.
 
     .. versionchanged:: 0.0.9
        Support for user_id property.
@@ -58,19 +63,23 @@ class BasicAuth(object):
     .. versionadded:: 0.0.4
     """
     def __init__(self):
-        self.user_id = None
+        self.request_auth_value = None
 
     def check_auth(self, username, password, allowed_roles, resource, method):
         """ This function is called to check if a username / password
         combination is valid. Must be overridden with custom logic.
 
+        :param username: username provided with current request.
+        :param password: password provided with current request
+        :param allowed_roles: allowed user roles.
         :param resource: resource being requested.
+        :param method: HTTP method being executed (POST, GET, etc.)
         """
         raise NotImplementedError
 
     def authenticate(self):
         """ Returns a standard a 401 response that enables basic auth.
-        Ovverride if you want to change the response and/or the realm.
+        Override if you want to change the response and/or the realm.
         """
         return Response(
             'Please provide proper credentials', 401,
@@ -106,16 +115,17 @@ class HMACAuth(BasicAuth):
         overridden with custom logic.
 
         :param userid: user id included with the request.
-        :param hmac: hash included with the request.
+        :param hmac_hash: hash included with the request.
         :param headers: request headers. Suitable for hash computing.
         :param data: request data. Suitable for hash computing.
         :param allowed_roles: allowed user roles.
         :param resource: resource being requested.
+        :param method: HTTP method being executed (POST, GET, etc.)
         """
         raise NotImplementedError
 
     def authenticate(self):
-        """ Returns a standard a 401. Ovverride if you want to change the
+        """ Returns a standard a 401. Override if you want to change the
         response.
         """
         return Response('Please provide proper credentials', 401)
@@ -139,7 +149,7 @@ class HMACAuth(BasicAuth):
 
 class TokenAuth(BasicAuth):
     """ Implements Token AUTH logic. Should be subclassed to implement custom
-    authorization checking.
+    authentication checking.
 
     .. versionchanged:: 0.0.7
        Support for 'resource' argument.
@@ -153,12 +163,13 @@ class TokenAuth(BasicAuth):
         :param token: decoded user name.
         :param allowed_roles: allowed user roles
         :param resource: resource being requested.
+        :param method: HTTP method being executed (POST, GET, etc.)
         """
         raise NotImplementedError
 
     def authenticate(self):
         """ Returns a standard a 401 response that enables basic auth.
-        Ovverride if you want to change the response and/or the realm.
+        Override if you want to change the response and/or the realm.
         """
         return Response(
             'Please provide proper credentials', 401,

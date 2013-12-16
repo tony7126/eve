@@ -19,7 +19,7 @@ The API is now live, ready to be consumed:
 
 .. code-block:: console
 
-    $ curl -i http://example.com/people/
+    $ curl -i http://example.com/people
     HTTP/1.1 200 OK
 
 All you need to bring your API online is a database, a configuration file
@@ -27,6 +27,8 @@ All you need to bring your API online is a database, a configuration file
 configuring and fine-tuning your API is a very simple process.
 
 Eve is thoroughly tested under Python 2.6, Python 2.7 and Python 3.3.
+
+`Check out the Eve Website <http://python-eve.org/>`_
 
 Features
 --------
@@ -40,7 +42,7 @@ Features
 * JSON and XML Rendering
 * Conditional Requests
 * Data Integrity and Concurrency Control
-* Multiple Insertions
+* Bulk Inserts
 * Data Validation
 * Extensible Data Validation
 * Resource-level Cache Control
@@ -50,12 +52,13 @@ Features
 * Default Values
 * Predefined Database Filters
 * Projections
+* Embedded Resource Serialization
 * Event Hooks
-* Native MongoDB Support
-* SQL Alchemy Support (WIP_)
+* Rate Limiting
+* Custom ID Fields
+* MongoDB Support
 * Powered by Flask
 
-`Check out the Eve homepage <http://python-eve.org/>`_
 
 License
 -------

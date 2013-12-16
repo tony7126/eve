@@ -14,9 +14,9 @@ import time
 from datetime import datetime
 from flask import current_app as app, request, abort, g, Response
 import simplejson as json
-from ..utils import str_to_date, parse_request, document_etag, config, \
-    request_method, debug_error_message
 from functools import wraps
+from eve.utils import parse_request, document_etag, config, request_method, \
+    debug_error_message
 
 
 def get_document(resource, **lookup):
@@ -39,7 +39,7 @@ def get_document(resource, **lookup):
     document = app.data.find_one(resource, **lookup)
     if document:
 
-        if not req.if_match:
+        if not req.if_match and config.IF_MATCH:
             # we don't allow editing unless the client provides an etag
             # for the document
             abort(403, description=debug_error_message(
@@ -51,7 +51,7 @@ def get_document(resource, **lookup):
         document[config.LAST_UPDATED] = last_updated(document)
         document[config.DATE_CREATED] = date_created(document)
 
-        if req.if_match != document_etag(document):
+        if req.if_match and req.if_match != document_etag(document):
             # client and server etags must match, or we don't allow editing
             # (ensures that client's version of the document is up to date)
             abort(412, description=debug_error_message(
@@ -67,6 +67,9 @@ def parse(value, resource):
 
     :param value: the string to be evaluated.
     :param resource: name of the involved resource.
+
+    .. versionchanged:: 0.1.1
+       Serialize data-specific values as needed.
 
     .. versionchanged:: 0.1.0
        Support for PUT method.
@@ -85,20 +88,13 @@ def parse(value, resource):
     except:
         # already a json
         document = value
-    # By design, dates are expressed as RFC-1123 strings. We convert them
-    # to proper datetimes.
-    dates = app.config['DOMAIN'][resource]['dates']
-    document_dates = dates.intersection(set(document.keys()))
-    for date_field in document_dates:
-        document[date_field] = str_to_date(document[date_field])
-
-    # update the document with eventual default values
-    if request_method() in ('POST', 'PUT'):
-        defaults = app.config['DOMAIN'][resource]['defaults']
-        missing_defaults = defaults.difference(set(document.keys()))
-        schema = config.DOMAIN[resource]['schema']
-        for missing_field in missing_defaults:
-            document[missing_field] = schema[missing_field]['default']
+    # if needed, get field values serialized by the data diver being used.
+    # If any error occurs, assume validation will take care of it (i.e. a badly
+    # formatted objectid).
+    try:
+        document = serialize(document, resource)
+    except:
+        pass
 
     return document
 
@@ -107,6 +103,10 @@ def payload():
     """ Performs sanity checks or decoding depending on the Content-Type,
     then returns the request payload as a dict. If request Content-Type is
     unsupported, aborts with a 400 (Bad Request).
+
+    .. versionchanged:: 0.1.1
+       Payload returned as a standard python dict regardless of request content
+       type.
 
     .. versionchanged:: 0.0.9
        More informative error messages.
@@ -123,7 +123,7 @@ def payload():
     if content_type == 'application/json':
         return request.get_json()
     elif content_type == 'application/x-www-form-urlencoded':
-        return request.form if len(request.form) else \
+        return request.form.to_dict() if len(request.form) else \
             abort(400, description=debug_error_message(
                 'No form-urlencoded data supplied'
             ))
@@ -212,9 +212,9 @@ def ratelimit():
 
 
 def last_updated(document):
-    """Fixes document's LAST_UPDATED field value. Flask-PyMongo returns
+    """ Fixes document's LAST_UPDATED field value. Flask-PyMongo returns
     timezone-aware values while stdlib datetime values are timezone-naive.
-    Comparisions between the two would fail.
+    Comparisons between the two would fail.
 
     If LAST_UPDATE is missing we assume that it has been created outside of the
     API context and inject a default value, to allow for proper computing of
@@ -236,8 +236,8 @@ def last_updated(document):
 
 
 def date_created(document):
-    """If DATE_CREATED is missing we assume that it has been created outside of
-    the API context and inject a default value. By design all documents
+    """ If DATE_CREATED is missing we assume that it has been created outside
+    of the API context and inject a default value. By design all documents
     return a DATE_CREATED (and we dont' want to break existing clients).
 
     :param document: the document to be processed.
@@ -262,3 +262,89 @@ def epoch():
     .. versionadded:: 0.0.5
     """
     return datetime(1970, 1, 1)
+
+
+def serialize(document, resource=None, schema=None):
+    """ Recursively handles field values that require data-aware serialization.
+    Relies on the app.data.serializers dictionary.
+
+    .. versionadded:: 0.1.1
+    """
+    if app.data.serializers:
+        if resource:
+            schema = config.DOMAIN[resource]['schema']
+        for field in document:
+            if field in schema:
+                field_schema = schema[field]
+                field_type = field_schema['type']
+                if 'schema' in field_schema:
+                    field_schema = field_schema['schema']
+                    if 'dict' in (field_type, field_schema.get('type', '')):
+                        # either a dict or a list of dicts
+                        embedded = [document[field]] if field_type == 'dict' \
+                            else document[field]
+                        for subdocument in embedded:
+                            if 'schema' in field_schema:
+                                serialize(subdocument,
+                                          schema=field_schema['schema'])
+                    else:
+                        # a list of one type, arbirtrary length
+                        field_type = field_schema['type']
+                        if field_type in app.data.serializers:
+                            i = 0
+                            for v in document[field]:
+                                document[field][i] = \
+                                    app.data.serializers[field_type](v)
+                                i += 1
+                elif 'items' in field_schema:
+                    # a list of multiple types, fixed length
+                    i = 0
+                    for s, v in zip(field_schema['items'], document[field]):
+                        field_type = s['type'] if 'type' in s else None
+                        if field_type in app.data.serializers:
+                            document[field][i] = \
+                                app.data.serializers[field_type](
+                                    document[field][i])
+                        i += 1
+                elif field_type in app.data.serializers:
+                    # a simple field
+                    document[field] = \
+                        app.data.serializers[field_type](document[field])
+    return document
+
+
+def resolve_default_values(document, resource):
+    """ Add any defined default value for missing document fields.
+
+    :param document: the document being posted or replaced
+    :param resource: the resource to which the document belongs
+
+    .. versionadded:: 0.2
+    """
+    if request_method() in ('POST', 'PUT'):
+        defaults = app.config['DOMAIN'][resource]['defaults']
+        missing_defaults = defaults.difference(set(document.keys()))
+        schema = config.DOMAIN[resource]['schema']
+        for missing_field in missing_defaults:
+            document[missing_field] = schema[missing_field]['default']
+
+
+def pre_event(f):
+    """ Enable a Hook pre http request.
+
+    .. versionadded:: 0.2
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        method = request_method()
+        if method in ('GET', 'POST', 'PATCH', 'DELETE', 'PUT'):
+            event_name = 'on_pre_' + method
+            resource = args[0] if args else None
+            # general hook
+            getattr(app, event_name)(resource, request)
+            if resource:
+                # resource hook
+                getattr(app, event_name + '_' + resource)(request)
+        r = f(*args, **kwargs)
+        return r
+    return decorated

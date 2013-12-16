@@ -173,10 +173,13 @@ def collection_link(resource):
 
     :param resource: the resource name.
 
+    .. versionchanged:: 0.2
+       Use new 'resource_title' setting for link title.
+
     .. versionchanged:: 0.0.3
        Now returning a JSON link
     """
-    return {'title': '%s' % config.URLS[resource],
+    return {'title': '%s' % config.DOMAIN[resource]['resource_title'],
             'href': '%s' % resource_uri(resource)}
 
 
@@ -199,23 +202,33 @@ def document_link(resource, document_id):
 def home_link():
     """ Returns a link to the API entry point/home page.
 
+    .. versionchanged:: 0.1.1
+       Handle the case of SERVER_NAME being None.
+
     .. versionchanged:: 0.0.3
        Now returning a JSON link.
     """
+    server_name = config.SERVER_NAME if config.SERVER_NAME else ''
     return {'title': 'home',
-            'href': '%s%s' % (config.SERVER_NAME, api_prefix())}
+            'href': '%s%s' % (server_name, api_prefix())}
 
 
 def resource_uri(resource):
     """ Returns the absolute URI to a resource.
+
+    .. versionchanged:: 0.1.1
+       URL prefixes are now included in config.URLS items, no more need to
+       explicitly add them to resource links.
+
+       Handle the case of SERVER_NAME being None.
 
     .. versionchanged:: 0.1.0
        No more trailing slashes in links.
 
     :param resource: the resource name.
     """
-    return '%s%s/%s' % (config.SERVER_NAME, api_prefix(),
-                        config.URLS[resource])
+    server_name = config.SERVER_NAME if config.SERVER_NAME else ''
+    return '%s/%s' % (server_name, config.URLS[resource])
 
 
 def api_prefix(url_prefix=None, api_version=None):
@@ -333,7 +346,7 @@ def validate_filters(where, resource):
     """
     allowed = config.DOMAIN[resource]['allowed_filters']
     if '*' not in allowed:
-        for filt, cond in where.items():
+        for filt, _ in where.items():
             if filt not in allowed:
                 return "filter on '%s' not allowed" % filt
     return None

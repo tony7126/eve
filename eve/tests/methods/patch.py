@@ -1,7 +1,8 @@
 #import unittest
 from eve.tests import TestBase
 from eve.tests.test_settings import MONGO_DBNAME
-from eve import STATUS_OK, LAST_UPDATED, ID_FIELD
+from eve import STATUS_OK, LAST_UPDATED, ID_FIELD, ISSUES
+from bson import ObjectId
 import simplejson as json
 
 
@@ -9,59 +10,50 @@ import simplejson as json
 class TestPatch(TestBase):
 
     def test_patch_to_resource_endpoint(self):
-        r, status = self.patch(self.known_resource_url, data={})
+        _, status = self.patch(self.known_resource_url, data={})
         self.assert405(status)
 
     def test_readonly_resource(self):
-        r, status = self.patch(self.readonly_id_url, data={})
+        _, status = self.patch(self.readonly_id_url, data={})
         self.assert405(status)
 
-    def test_bad_form_length(self):
-        r, status = self.patch(self.item_id_url, data={})
-        self.assert400(status)
-
-        r, status = self.patch(self.item_id_url,
-                               data={'key1': 'value1', 'key2': 'value2'})
-        self.assert400(status)
-
     def test_unknown_id(self):
-        r, status = self.patch(self.unknown_item_id_url,
-                               data={'key1': 'value1'})
+        _, status = self.patch(self.unknown_item_id_url,
+                               data={"key1": 'value1'})
         self.assert404(status)
 
     def test_unknown_id_different_resource(self):
         # patching a 'user' with a valid 'contact' id will 404
-        r, status = self.patch('%s/%s/' % (self.different_resource,
+        _, status = self.patch('%s/%s/' % (self.different_resource,
                                            self.item_id),
-                               data={'key1': 'value1'})
+                               data={"key1": "value1"})
         self.assert404(status)
 
         # of course we can still patch a 'user'
-        r, status = self.patch('%s/%s/' % (self.different_resource,
+        _, status = self.patch('%s/%s/' % (self.different_resource,
                                            self.user_id),
                                data={'key1': '{"username": "username1"}'},
                                headers=[('If-Match', self.user_etag)])
         self.assert200(status)
 
     def test_by_name(self):
-        r, status = self.patch(self.item_name_url, data={'key1': 'value1'})
+        _, status = self.patch(self.item_name_url, data={'key1': 'value1'})
         self.assert405(status)
 
     def test_ifmatch_missing(self):
-        r, status = self.patch(self.item_id_url, data={'key1': 'value1'})
+        _, status = self.patch(self.item_id_url, data={'key1': 'value1'})
         self.assert403(status)
 
+    def test_ifmatch_disabled(self):
+        self.app.config['IF_MATCH'] = False
+        _, status = self.patch(self.item_id_url, data={'key1': 'value1'})
+        self.assert200(status)
+
     def test_ifmatch_bad_etag(self):
-        r, status = self.patch(self.item_id_url,
+        _, status = self.patch(self.item_id_url,
                                data={'key1': 'value1'},
                                headers=[('If-Match', 'not-quite-right')])
         self.assert412(status)
-
-    def test_bad_request(self):
-        r, status = self.patch(self.item_id_url,
-                               data={'key1': '{"ref"="hey, gonna bomb"}'},
-                               headers=[('If-Match', self.item_etag)])
-        self.assert400(status)
 
     def test_unique_value(self):
         # TODO
@@ -71,16 +63,16 @@ class TestPatch(TestBase):
         # syntatically correcy in case of validation issues.
         # We should probably test every single case as well (seems overkill).
         r, status = self.patch(self.item_id_url,
-                               data={'key1': '{"ref": "%s"}' % self.alt_ref},
+                               data={"ref": "%s" % self.alt_ref},
                                headers=[('If-Match', self.item_etag)])
         self.assert200(status)
-        self.assertValidationError(r, 'key1', ("field 'ref'", self.alt_ref,
-                                               'not unique'))
+        self.assertValidationError(r, ("field 'ref'", self.alt_ref,
+                                       'not unique'))
 
     def test_patch_string(self):
         field = "ref"
         test_value = "1234567890123456789012345"
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
         self.assertEqual(db_value, test_value)
@@ -88,7 +80,7 @@ class TestPatch(TestBase):
     def test_patch_integer(self):
         field = "prog"
         test_value = 9999
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
         self.assertEqual(db_value, test_value)
@@ -96,7 +88,7 @@ class TestPatch(TestBase):
     def test_patch_list_as_array(self):
         field = "role"
         test_value = ["vendor", "client"]
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
         self.assertTrue(set(test_value).issubset(db_value))
@@ -107,7 +99,7 @@ class TestPatch(TestBase):
             {'sku': 'AT1234', 'price': 99},
             {'sku': 'XF9876', 'price': 9999}
         ]
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
 
@@ -117,7 +109,7 @@ class TestPatch(TestBase):
     def test_patch_list(self):
         field = "alist"
         test_value = ["a_string", 99]
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
         self.assertEqual(db_value, test_value)
@@ -125,7 +117,7 @@ class TestPatch(TestBase):
     def test_patch_dict(self):
         field = "location"
         test_value = {'address': 'an address', 'city': 'a city'}
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
         self.assertEqual(db_value, test_value)
@@ -133,7 +125,7 @@ class TestPatch(TestBase):
     def test_patch_datetime(self):
         field = "born"
         test_value = "Tue, 06 Nov 2012 10:33:31 GMT"
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
         self.assertEqual(db_value, test_value)
@@ -141,7 +133,7 @@ class TestPatch(TestBase):
     def test_patch_objectid(self):
         field = "tid"
         test_value = "4f71c129c88e2018d4000000"
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         db_value = self.compare_patch_with_get(field, r)
         self.assertEqual(db_value, test_value)
@@ -149,7 +141,7 @@ class TestPatch(TestBase):
     def test_patch_defaults(self):
         field = "ref"
         test_value = "1234567890123456789012345"
-        changes = {'key1': json.dumps({field: test_value})}
+        changes = {field: test_value}
         r = self.perform_patch(changes)
         self.assertRaises(KeyError, self.compare_patch_with_get, 'title', r)
 
@@ -164,9 +156,8 @@ class TestPatch(TestBase):
     def test_patch_multiple_fields(self):
         fields = ['ref', 'prog', 'role']
         test_values = ["9876543210987654321054321", 123, ["agent"]]
-        changes = {'key1': json.dumps({"ref": test_values[0],
-                                       "prog": test_values[1],
-                                       "role": test_values[2]})}
+        changes = {"ref": test_values[0], "prog": test_values[1],
+                   "role": test_values[2]}
         r = self.perform_patch(changes)
         db_values = self.compare_patch_with_get(fields, r)
         for i in range(len(db_values)):
@@ -182,15 +173,15 @@ class TestPatch(TestBase):
                                data=changes,
                                headers=[('If-Match', self.item_etag)])
         self.assert200(status)
-        self.assertPatchResponse(r, 'key1', self.item_id)
+        self.assertPatchResponse(r, self.item_id)
         return r
 
     def perform_patch_with_post_override(self, field, value):
         headers = [('X-HTTP-Method-Override', 'PATCH'),
                    ('If-Match', self.item_etag),
-                   ('Content-Type', 'application/x-www-form-urlencoded')]
+                   ('Content-Type', 'application/json')]
         return self.test_client.post(self.item_id_url,
-                                     data={'key1': json.dumps({field: value})},
+                                     data=json.dumps({field: value}),
                                      headers=headers)
 
     def compare_patch_with_get(self, fields, patch_response):
@@ -198,52 +189,51 @@ class TestPatch(TestBase):
         r, status = self.parse_response(raw_r)
         self.assert200(status)
         self.assertEqual(raw_r.headers.get('ETag'),
-                         patch_response['key1']['etag'])
+                         patch_response['etag'])
         if isinstance(fields, str):
             return r[fields]
         else:
             return [r[field] for field in fields]
 
     def test_patch_allow_unknown(self):
-        changes = {'key1': json.dumps({"unknown": "unknown"})}
+        changes = {"unknown": "unknown"}
         r, status = self.patch(self.item_id_url,
                                data=changes,
                                headers=[('If-Match', self.item_etag)])
         self.assert200(status)
-        self.assertValidationError(r, 'key1', 'unknown field')
+        self.assertValidationError(r, 'unknown field')
         self.app.config['DOMAIN'][self.known_resource]['allow_unknown'] = True
         r, status = self.patch(self.item_id_url,
                                data=changes,
                                headers=[('If-Match', self.item_etag)])
         self.assert200(status)
-        self.assertPatchResponse(r, 'key1', self.item_id)
+        self.assertPatchResponse(r, self.item_id)
 
-    def test_patch_json(self):
+    def test_patch_x_www_form_urlencoded(self):
         field = "ref"
         test_value = "1234567890123456789012345"
-        changes = json.dumps({'key1': {field: test_value}})
-        headers = [('If-Match', self.item_etag),
-                   ('Content-Type', 'application/json')]
+        changes = {field: test_value}
+        headers = [('If-Match', self.item_etag)]
         r, status = self.parse_response(self.test_client.patch(
             self.item_id_url, data=changes, headers=headers))
         self.assert200(status)
-        self.assertTrue('OK' in r['key1']['status'])
+        self.assertTrue('OK' in r['status'])
 
     def test_patch_referential_integrity(self):
-        data = {'item1': json.dumps({"person": self.unknown_item_id})}
+        data = {"person": self.unknown_item_id}
         headers = [('If-Match', self.invoice_etag)]
         r, status = self.patch(self.invoice_id_url, data=data, headers=headers)
         self.assert200(status)
-        expected = ("value '%s' for field '%s' must exist in collection "
+        expected = ("value '%s' for field '%s' must exist in resource "
                     "collection '%s', field '%s'" %
                     (self.unknown_item_id, 'person', 'contacts',
                      self.app.config['ID_FIELD']))
-        self.assertValidationError(r, 'item1', expected)
+        self.assertValidationError(r, expected)
 
-        data = {'item1': json.dumps({"person": self.item_id})}
+        data = {"person": self.item_id}
         r, status = self.patch(self.invoice_id_url, data=data, headers=headers)
         self.assert200(status)
-        self.assertPatchResponse(r, 'item1', self.invoice_id)
+        self.assertPatchResponse(r, self.invoice_id)
 
     def test_patch_write_concern_success(self):
         # 0 and 1 are the only valid values for 'w' on our mongod instance (1
@@ -251,8 +241,8 @@ class TestPatch(TestBase):
         self.domain['contacts']['mongo_write_concern'] = {'w': 0}
         field = "ref"
         test_value = "X234567890123456789012345"
-        changes = {'key1': json.dumps({field: test_value})}
-        r, status = self.patch(self.item_id_url,
+        changes = {field: test_value}
+        _, status = self.patch(self.item_id_url,
                                data=changes,
                                headers=[('If-Match', self.item_etag)])
         self.assert200(status)
@@ -262,8 +252,8 @@ class TestPatch(TestBase):
         self.domain['contacts']['mongo_write_concern'] = {'w': 2}
         field = "ref"
         test_value = "X234567890123456789012345"
-        changes = {'key1': json.dumps({field: test_value})}
-        r, status = self.patch(self.item_id_url,
+        changes = {field: test_value}
+        _, status = self.patch(self.item_id_url,
                                data=changes,
                                headers=[('If-Match', self.item_etag)])
         self.assert500(status)
@@ -290,27 +280,49 @@ class TestPatch(TestBase):
         # attempt a PATCH with the new etag.
         field = "ref"
         test_value = "X234567890123456789012345"
-        changes = {'key1': json.dumps({field: test_value})}
-        r, status = self.patch('%s/%s' % (self.known_resource_url, _id),
+        changes = {field: test_value}
+        _, status = self.patch('%s/%s' % (self.known_resource_url, _id),
                                data=changes, headers=[('If-Match', etag)])
         self.assert200(status)
 
-    def assertPatchResponse(self, response, key, item_id):
-        self.assertTrue(key in response)
-        k = response[key]
-        self.assertTrue('status' in k)
-        self.assertTrue(STATUS_OK in k['status'])
-        self.assertFalse('issues' in k)
-        self.assertTrue(ID_FIELD in k)
-        self.assertEqual(k[ID_FIELD], item_id)
-        self.assertTrue(LAST_UPDATED in k)
-        self.assertTrue('etag' in k)
-        self.assertTrue('_links') in k
-        self.assertItemLink(k['_links'], item_id)
+    def test_patch_subresource(self):
+        _db = self.connection[MONGO_DBNAME]
+
+        # create random contact
+        fake_contact = self.random_contacts(1)
+        fake_contact_id = _db.contacts.insert(fake_contact)[0]
+
+        # update first invoice to reference the new contact
+        _db.invoices.update({'_id': ObjectId(self.invoice_id)},
+                            {'$set': {'person': fake_contact_id}})
+
+        # GET all invoices by new contact
+        response, status = self.get('users/%s/invoices/%s' %
+                                    (fake_contact_id, self.invoice_id))
+        etag = response['etag']
+
+        data = {"inv_number": "new_number"}
+        headers = [('If-Match', etag)]
+        response, status = self.patch('users/%s/invoices/%s' %
+                                      (fake_contact_id, self.invoice_id),
+                                      data=data, headers=headers)
+        self.assert200(status)
+        self.assertPatchResponse(response, self.invoice_id)
+
+    def assertPatchResponse(self, response, item_id):
+        self.assertTrue('status' in response)
+        self.assertTrue(STATUS_OK in response['status'])
+        self.assertFalse(ISSUES in response)
+        self.assertTrue(ID_FIELD in response)
+        self.assertEqual(response[ID_FIELD], item_id)
+        self.assertTrue(LAST_UPDATED in response)
+        self.assertTrue('etag' in response)
+        self.assertTrue('_links' in response)
+        self.assertItemLink(response['_links'], item_id)
 
     def patch(self, url, data, headers=[]):
-        headers.append(('Content-Type', 'application/x-www-form-urlencoded'))
+        headers.append(('Content-Type', 'application/json'))
         r = self.test_client.patch(url,
-                                   data=data,
+                                   data=json.dumps(data),
                                    headers=headers)
         return self.parse_response(r)
