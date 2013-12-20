@@ -71,7 +71,7 @@ def get(resource, lookup):
     if config.DOMAIN[resource]["aggregation"]:
         cursor = app.data.aggregate(resource, req)
     else:
-        cursor = app.data.find(resource, req)
+        cursor = app.data.find(resource, req, lookup)
 
 
     for document in cursor:

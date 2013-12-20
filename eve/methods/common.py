@@ -38,7 +38,7 @@ def get_document(resource, **lookup):
     req = parse_request(resource)
     document = app.data.find_one(resource, **lookup)
     if document:
-
+        print "IF_MATCH:", config.IF_MATCH
         if not req.if_match and config.IF_MATCH:
             # we don't allow editing unless the client provides an etag
             # for the document
