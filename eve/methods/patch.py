@@ -13,7 +13,7 @@
 from flask import current_app as app, abort
 from werkzeug import exceptions
 from datetime import datetime
-from eve.utils import document_etag, document_link, config, debug_error_message
+from eve.utils import document_etag, document_link, config, debug_error_message, parse_request
 from eve.auth import requires_auth
 from eve.validation import ValidationError
 from eve.methods.common import get_document, parse, payload as payload_, \
@@ -69,6 +69,8 @@ def patch(resource, **lookup):
        JSON links. Superflous ``response`` container removed.
     """
     payload = payload_()
+    req = parse_request(resource)
+
     original = get_document(resource, **lookup)
     if not original:
         # not found
@@ -99,8 +101,7 @@ def patch(resource, **lookup):
             updates[config.LAST_UPDATED] = original[config.LAST_UPDATED] = \
                 datetime.utcnow().replace(microsecond=0)
             etag = document_etag(original)
-
-            app.data.update(resource, object_id, updates)
+            app.data.update(resource, object_id, updates, req)
             response[config.ID_FIELD] = object_id
             last_modified = response[config.LAST_UPDATED] = \
                 original[config.LAST_UPDATED]

@@ -253,7 +253,7 @@ class Mongo(DataLayer):
         cursor = Cursor(docs)  #gives required functions to returned result 
         return cursor
 
-    def find_one(self, resource, **lookup):
+    def find_one(self, resource, req = None, **lookup):
         """ Retrieves a single document.
 
         :param resource: resource name.
@@ -277,9 +277,14 @@ class Mongo(DataLayer):
                 pass
 
         self._mongotize(lookup)
+        client_projection = None
+        if req:
+            if req.projection:
+                client_projection = self._sanitize(json.loads(req.projection))
 
         datasource, filter_, projection, _ = self._datasource_ex(resource,
-                                                                 lookup)
+                                                                 lookup,
+                                                                 client_projection)
 
         document = self.driver.db[datasource].find_one(filter_, projection)
         return document

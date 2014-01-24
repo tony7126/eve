@@ -61,6 +61,9 @@ class ParsedRequest(object):
     # `page` value of the query string (?page). Defaults to 1.
     page = 1
 
+    # `at` is a positional argument for PATCH requests.  Defaults to None
+    at = None
+
     # `max_result` value of the query string (?max_results). Defaults to
     # `PAGINATION_DEFAULT` unless pagination is disabled.
     max_results = 0
@@ -98,6 +101,8 @@ def parse_request(resource):
 
     r = ParsedRequest()
 
+    r.at = args.get('at')
+    
     if config.DOMAIN[resource]['allowed_filters']:
         r.where = args.get('where')
     if config.DOMAIN[resource]['projection']:

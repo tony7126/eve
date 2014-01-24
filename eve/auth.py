@@ -26,6 +26,7 @@ def requires_auth(endpoint_class):
                 # resource or item endpoint
                 resource_name = args[0]
                 resource = app.config['DOMAIN'][args[0]]
+
                 if endpoint_class == 'resource':
                     public = resource['public_methods']
                     roles = resource['allowed_roles']
@@ -33,6 +34,7 @@ def requires_auth(endpoint_class):
                     public = resource['public_item_methods']
                     roles = resource['allowed_item_roles']
                 auth = resource['authentication']
+                app.auth = auth
             else:
                 # home
                 resource_name = resource = None
