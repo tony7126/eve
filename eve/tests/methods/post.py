@@ -1,7 +1,8 @@
 from eve.tests import TestBase
 import simplejson as json
 from ast import literal_eval
-from eve import STATUS_OK, LAST_UPDATED, ID_FIELD, DATE_CREATED, ISSUES, STATUS
+from eve import STATUS_OK, LAST_UPDATED, ID_FIELD, DATE_CREATED, ISSUES, \
+    STATUS, ETAG
 
 
 class TestPost(TestBase):
@@ -20,11 +21,11 @@ class TestPost(TestBase):
     def test_validation_error(self):
         r, status = self.post(self.known_resource_url, data={"ref": "123"})
         self.assert200(status)
-        self.assertValidationError(r, ("min length for field 'ref' is 25",))
+        self.assertValidationError(r, {'ref': 'min length is 25'})
 
         r, status = self.post(self.known_resource_url, data={"prog": 123})
         self.assert200(status)
-        self.assertValidationError(r, ("required", "ref"))
+        self.assertValidationError(r, {'ref': 'required'})
 
     def test_post_empty_resource(self):
         data = []
@@ -136,21 +137,21 @@ class TestPost(TestBase):
         ]
         r = self.perform_post(data, [0, 2])
 
-        self.assertValidationError(r[1], ("required", "ref"))
-        self.assertValidationError(r[3], ("unique", "ref"))
-        self.assertValidationError(r[4], ("ObjectId", "tid"))
+        self.assertValidationError(r[1], {'ref': 'required'})
+        self.assertValidationError(r[3], {'ref': 'unique'})
+        self.assertValidationError(r[4], {'tid': 'ObjectId'})
 
         item_id = r[0][ID_FIELD]
-        db_value = self.compare_post_with_get(item_id, "ref")
+        db_value = self.compare_post_with_get(item_id, 'ref')
         self.assertTrue(db_value == items[0][1])
 
         item_id = r[2][ID_FIELD]
-        db_value = self.compare_post_with_get(item_id, ["ref", "role"])
+        db_value = self.compare_post_with_get(item_id, ['ref', 'role'])
         self.assertTrue(db_value[0] == items[2][1])
         self.assertTrue(db_value[1] == items[2][2])
 
         # items on which validation failed should not be inserted into the db
-        _, status = self.get(self.known_resource_url, "where=prog==7")
+        _, status = self.get(self.known_resource_url, 'where=prog==7')
         self.assert404(status)
 
     def test_post_x_www_form_urlencoded(self):
@@ -160,7 +161,7 @@ class TestPost(TestBase):
         r, status = self.parse_response(self.test_client.post(
             self.known_resource_url, data=data))
         self.assert200(status)
-        self.assertTrue('OK' in r['status'])
+        self.assertTrue('OK' in r[STATUS])
         self.assert200(status)
         self.assertPostResponse(r)
 
@@ -168,11 +169,10 @@ class TestPost(TestBase):
         data = {"person": self.unknown_item_id}
         r, status = self.post('/invoices/', data=data)
         self.assert200(status)
-        expected = ("value '%s' for field '%s' must exist in "
-                    "resource '%s', field '%s'" %
-                    (self.unknown_item_id, 'person', 'contacts',
+        expected = ("value '%s' must exist in resource '%s', field '%s'" %
+                    (self.unknown_item_id, 'contacts',
                      self.app.config['ID_FIELD']))
-        self.assertValidationError(r, expected)
+        self.assertValidationError(r, {'person': expected})
 
         data = {"person": self.item_id}
         r, status = self.post('/invoices/', data=data)
@@ -184,7 +184,7 @@ class TestPost(TestBase):
         data = {"unknown": "unknown"}
         r, status = self.post(self.known_resource_url, data=data)
         self.assert200(status)
-        self.assertValidationError(r, "unknown")
+        self.assertValidationError(r, {'unknown': 'unknown'})
         self.app.config['DOMAIN'][self.known_resource]['allow_unknown'] = True
         r, status = self.post(self.known_resource_url, data=data)
         self.assert200(status)
@@ -283,12 +283,35 @@ class TestPost(TestBase):
         self.assert200(status)
         self.assertTrue('report' in r and STATUS not in r)
 
+    def test_custom_etag_update_date(self):
+        self.app.config['ETAG'] = '_myetag'
+        r, status = self.post(self.known_resource_url,
+                              data={"ref": "1234567890123456789054321"})
+        self.assert200(status)
+        self.assertTrue('_myetag' in r and ETAG not in r)
+
+    def test_custom_date_updated(self):
+        self.app.config['LAST_UPDATED'] = '_update_date'
+        r, status = self.post(self.known_resource_url,
+                              data={"ref": "1234567890123456789054321"})
+        self.assert200(status)
+        self.assertTrue('_update_date' in r and LAST_UPDATED not in r)
+
     def test_subresource(self):
         data = {"person": self.item_id}
         response, status = self.post('users/%s/invoices' % self.item_id,
                                      data=data)
         self.assert200(status)
         self.assertPostResponse(response)
+
+    def test_post_ifmatch_disabled(self):
+        # if IF_MATCH is disabled, then we get no etag in the payload.
+        self.app.config['IF_MATCH'] = False
+        test_field = 'ref'
+        test_value = "1234567890123456789054321"
+        data = {test_field: test_value}
+        r, status = self.post(self.known_resource_url, data=data)
+        self.assertTrue(ETAG not in r)
 
     def perform_post(self, data, valid_items=[0]):
         r, status = self.post(self.known_resource_url, data=data)
@@ -299,8 +322,8 @@ class TestPost(TestBase):
     def assertPostItem(self, data, test_field, test_value):
         r = self.perform_post(data)
         item_id = r[ID_FIELD]
-        item_etag = r['etag']
-        db_value = self.compare_post_with_get(item_id, [test_field, 'etag'])
+        item_etag = r[ETAG]
+        db_value = self.compare_post_with_get(item_id, [test_field, ETAG])
         self.assertTrue(db_value[0] == test_value)
         self.assertTrue(db_value[1] == item_etag)
 
@@ -309,14 +332,14 @@ class TestPost(TestBase):
             response = [response]
         for i in valid_items:
             item = response[i]
-            self.assertTrue('status' in item)
-            self.assertTrue(STATUS_OK in item['status'])
+            self.assertTrue(STATUS in item)
+            self.assertTrue(STATUS_OK in item[STATUS])
             self.assertFalse(ISSUES in item)
             self.assertTrue(ID_FIELD in item)
             self.assertTrue(LAST_UPDATED in item)
             self.assertTrue('_links' in item)
             self.assertItemLink(item['_links'], item[ID_FIELD])
-            self.assertTrue('etag' in item)
+            self.assertTrue(ETAG in item)
 
     def compare_post_with_get(self, item_id, fields):
         raw_r = self.test_client.get("%s/%s" % (self.known_resource_url,

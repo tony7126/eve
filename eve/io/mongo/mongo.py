@@ -107,6 +107,9 @@ class Mongo(DataLayer):
         :param req: a :class:`ParsedRequest`instance.
         :param sub_resource_lookup: sub-resource lookup from the endpoint url.
 
+        .. versionchanged:: 0.3
+           Support for new _mongotize() signature.
+
         .. versionchagend:: 0.2
            Support for sub-resources.
            Support for 'default_sort'.
@@ -169,7 +172,7 @@ class Mongo(DataLayer):
         if sub_resource_lookup:
             spec.update(sub_resource_lookup)
 
-        spec = self._mongotize(spec)
+        spec = self._mongotize(spec, resource)
 
         bad_filter = validate_filters(spec, resource)
         if bad_filter:
@@ -259,6 +262,10 @@ class Mongo(DataLayer):
         :param resource: resource name.
         :param **lookup: lookup query.
 
+        .. versionchanged:: 0.3.0
+           Support for new _mongotize() signature.
+           Custom ID_FIELD lookups would raise an exception. See #203.
+
         .. versionchanged:: 0.1.0
            ID_FIELD to ObjectID conversion is done before `_datasource_ex` is
            called.
@@ -271,12 +278,12 @@ class Mongo(DataLayer):
         """
         if config.ID_FIELD in lookup:
             try:
-                lookup[ID_FIELD] = ObjectId(lookup[ID_FIELD])
+                lookup[config.ID_FIELD] = ObjectId(lookup[config.ID_FIELD])
             except (InvalidId, TypeError):
                 # Returns a type error when {'_id': {...}}
                 pass
 
-        self._mongotize(lookup)
+        self._mongotize(lookup, resource)
         client_projection = None
         if req:
             if req.projection:
@@ -363,11 +370,14 @@ class Mongo(DataLayer):
                 'pymongo.errors.OperationFailure: %s' % e
             ))
 
-    def update(self, resource, id_, updates):
+    def update(self, resource, id_, updates, original = None):
         """ Updates a collection document.
 
+        .. versionchanged:: 0.3.0
+           Custom ID_FIELD lookups would fail. See #203.
+
         .. versionchanged:: 0.2
-           Don't explicitly converto ID_FIELD to ObjectId anymore, so we can
+           Don't explicitly convert ID_FIELD to ObjectId anymore, so we can
            also process different types (UUIDs etc).
 
         .. versionchanged:: 0.0.9
@@ -382,8 +392,8 @@ class Mongo(DataLayer):
         .. versionchanged:: 0.0.4
            retrieves the target collection via the new config.SOURCES helper.
         """
-        datasource, filter_, _, _ = self._datasource_ex(resource, {ID_FIELD:
-                                                                   id_})
+        datasource, filter_, _, _ = self._datasource_ex(resource,
+                                                        {config.ID_FIELD: id_})
 
         # TODO consider using find_and_modify() instead. The document might
         # have changed since the ETag was computed. This would require getting
@@ -400,14 +410,17 @@ class Mongo(DataLayer):
     def replace(self, resource, id_, document):
         """ Replaces an existing document.
 
+        .. versionchanged:: 0.3.0
+           Custom ID_FIELD lookups would fail. See #203.
+
         .. versionchanged:: 0.2
            Don't explicitly converto ID_FIELD to ObjectId anymore, so we can
            also process different types (UUIDs etc).
 
         .. versionadded:: 0.1.0
         """
-        datasource, filter_, _, _ = self._datasource_ex(resource, {ID_FIELD:
-                                                                   id_})
+        datasource, filter_, _, _ = self._datasource_ex(resource,
+                                                        {config.ID_FIELD: id_})
 
         # TODO consider using find_and_modify() instead. The document might
         # have changed since the ETag was computed. This would require getting
@@ -421,9 +434,13 @@ class Mongo(DataLayer):
                 'pymongo.errors.OperationFailure: %s' % e
             ))
 
-    def remove(self, resource, id_=None):
+    def remove(self, resource, lookup):
         """ Removes a document or the entire set of documents from a
         collection.
+
+        .. versionchanged:: 0.3
+           Support lookup arg, which allows to properly delete sub-resources
+           (only delete documents that meet a certain constraint).
 
         .. versionchanged:: 0.2
            Don't explicitly converto ID_FIELD to ObjectId anymore, so we can
@@ -444,8 +461,8 @@ class Mongo(DataLayer):
         .. versionadded:: 0.0.2
             Support for deletion of entire documents collection.
         """
-        query = {ID_FIELD: id_} if id_ else None
-        datasource, filter_, _, _ = self._datasource_ex(resource, query)
+        lookup = self._mongotize(lookup, resource)
+        datasource, filter_, _, _ = self._datasource_ex(resource, lookup)
         try:
             self.driver.db[datasource].remove(filter_, **self._wc(resource))
         except pymongo.errors.OperationFailure as e:
@@ -534,9 +551,13 @@ class Mongo(DataLayer):
             return False
         return True
 
-    def _mongotize(self, source):
+    def _mongotize(self, source, resource):
         """ Recursively iterates a JSON dictionary, turning RFC-1123 strings
         into datetime values and ObjectId-link strings into ObjectIds.
+
+        .. versionchanged:: 0.3
+           'query_objectid_as_string' allows to bypass casting string types
+           to objectids.
 
         .. versionchanged:: 0.1.1
            Renamed from _jsondatetime to _mongotize, as it now handles
@@ -555,23 +576,29 @@ class Mongo(DataLayer):
         else:
             _str_type = basestring  # noqa
 
+        schema = config.DOMAIN[resource]
+        skip_objectid = schema.get('query_objectid_as_string', False)
+
         def try_cast(v):
             try:
                 return datetime.strptime(v, config.DATE_FORMAT)
             except:
-                try:
-                    return ObjectId(v)
-                except:
+                if not skip_objectid:
+                    try:
+                        return ObjectId(v)
+                    except:
+                        return v
+                else:
                     return v
 
         for k, v in source.items():
             if isinstance(v, dict):
-                self._mongotize(v)
+                self._mongotize(v, resource)
             elif isinstance(v, list):
                 i = 0
                 for v1 in v:
                     if isinstance(v1, dict):
-                        source[k][i] = self._mongotize(v1)
+                        source[k][i] = self._mongotize(v1, resource)
                     else:
                         source[k][i] = try_cast(v1)
                     i += 1

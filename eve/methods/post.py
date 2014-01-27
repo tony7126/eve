@@ -12,12 +12,13 @@
 """
 
 from datetime import datetime
-from flask import current_app as app, request
+from flask import current_app as app
 from eve.utils import document_link, config, document_etag
 from eve.auth import requires_auth
 from eve.validation import ValidationError
 from eve.methods.common import parse, payload, ratelimit, \
-    resolve_default_values, pre_event
+    resolve_default_values, pre_event, resolve_media_files, \
+    resolve_user_restricted_access
 
 
 @ratelimit()
@@ -42,6 +43,12 @@ def post(resource, payl=None):
 
                  See https://github.com/nicolaiarocci/eve/issues/74 for a
                  discussion, and a typical use case.
+
+    .. versionchanged:: 0.3
+       Fix #231 auth field not set if resource level authentication is set.
+       Support for media fields.
+       When IF_MATCH is disabled, no etag is included in the payload.
+       Support for new validation format introduced with Cerberus v0.5.
 
     .. versionchanged:: 0.2
        Use the new STATUS setting.
@@ -114,7 +121,7 @@ def post(resource, payl=None):
 
     for value in payl:
         document = []
-        doc_issues = []
+        doc_issues = {}
         try:
             document = parse(value, resource)
             validation = validator.validate(document)
@@ -123,26 +130,18 @@ def post(resource, payl=None):
                 document[config.LAST_UPDATED] = \
                     document[config.DATE_CREATED] = date_utc
 
-                # if 'user-restricted resource access' is enabled
-                # and there's an Auth request active,
-                # inject the auth_field into the document
-                auth_field = resource_def['auth_field']
-                if app.auth and auth_field:
-                    request_auth_value = \
-                        resource_def['authentication'].request_auth_value
-                    if request_auth_value and request.authorization:
-                        document[auth_field] = request_auth_value
-
+                resolve_user_restricted_access(document, resource)
                 resolve_default_values(document, resource)
+                resolve_media_files(document, resource)
             else:
                 # validation errors added to list of document issues
-                doc_issues.extend(validator.errors)
+                doc_issues = validator.errors
         except ValidationError as e:
-            raise e
+            doc_issues['validation exception'] = str(e)
         except Exception as e:
             # most likely a problem with the incoming payload, report back to
             # the client as if it was a validation issue
-            doc_issues.append(str(e))
+            doc_issues['exception'] = str(e)
 
         issues.append(doc_issues)
 
@@ -168,7 +167,8 @@ def post(resource, payl=None):
             response_item[config.ID_FIELD] = ids.pop(0)
             document = documents.pop(0)
             response_item[config.LAST_UPDATED] = document[config.LAST_UPDATED]
-            response_item['etag'] = document_etag(document)
+            if config.IF_MATCH:
+                response_item[config.ETAG] = document_etag(document)
             if resource_def['hateoas']:
                 response_item[config.LINKS] = \
                     {'self': document_link(resource,
