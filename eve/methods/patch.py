@@ -109,7 +109,9 @@ def patch(resource, **lookup):
             updates[config.LAST_UPDATED] = original[config.LAST_UPDATED] = \
                 datetime.utcnow().replace(microsecond=0)
             etag = document_etag(original)
-
+            # notify callbacks
+            getattr(app, "on_update")(resource, original, updates)
+            getattr(app, "on_update_%s" % resource)(original, updates)
             app.data.update(resource, object_id, updates, original)
 
             response[config.ID_FIELD] = object_id
